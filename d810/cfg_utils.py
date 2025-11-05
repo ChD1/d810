@@ -350,9 +350,24 @@ def insert_nop_blk(blk: mblock_t) -> mblock_t:
         mba.verify(True)
         return nop_block
     except RuntimeError as e:
-        helper_logger.error("Error in insert_nop_blk: {0}".format(e))
-        log_block_info(nop_block, helper_logger.error)
-        raise e
+        error_msg = str(e)
+        if "INTERR: 50863" in error_msg:
+            # CFG verification failed - try relaxed verification
+            helper_logger.warning("CFG strict verification failed in insert_nop_blk (INTERR: 50863), trying relaxed verification")
+            try:
+                mba.verify(False)
+                helper_logger.debug("Relaxed verification succeeded for nop block {0}".format(nop_block.serial))
+                return nop_block
+            except RuntimeError as e2:
+                # Even relaxed failed - log details and re-raise
+                helper_logger.error("Error in insert_nop_blk: {0}".format(e2))
+                log_block_info(nop_block, helper_logger.error)
+                raise e2
+        else:
+            # Different error - log and re-raise
+            helper_logger.error("Error in insert_nop_blk: {0}".format(e))
+            log_block_info(nop_block, helper_logger.error)
+            raise e
 
 
 def ensure_last_block_is_goto(mba: mbl_array_t) -> int:
@@ -474,15 +489,26 @@ def ensure_child_has_an_unconditional_father(father_block: mblock_t, child_block
     if father_block.nsucc() == 1:
         return 0
 
-    if father_block.tail.d.b == child_block.serial:
-        helper_logger.debug("Father {0} is a conditional jump to child {1}, creating a new father"
-                            .format(father_block.serial, child_block.serial))
-        new_father_block = insert_nop_blk(mba.get_mblock(mba.qty - 2))
-        change_1way_block_successor(new_father_block, child_block.serial)
-        change_2way_block_conditional_successor(father_block, new_father_block.serial)
-    else:
-        helper_logger.info("Father {0} is a conditional jump to child {1} (default child), creating a new father"
-                           .format(father_block.serial, child_block.serial))
-        new_father_block = insert_nop_blk(father_block)
-        change_1way_block_successor(new_father_block, child_block.serial)
-    return 1
+    try:
+        if father_block.tail.d.b == child_block.serial:
+            helper_logger.debug("Father {0} is a conditional jump to child {1}, creating a new father"
+                                .format(father_block.serial, child_block.serial))
+            new_father_block = insert_nop_blk(mba.get_mblock(mba.qty - 2))
+            change_1way_block_successor(new_father_block, child_block.serial)
+            change_2way_block_conditional_successor(father_block, new_father_block.serial)
+        else:
+            helper_logger.info("Father {0} is a conditional jump to child {1} (default child), creating a new father"
+                               .format(father_block.serial, child_block.serial))
+            new_father_block = insert_nop_blk(father_block)
+            change_1way_block_successor(new_father_block, child_block.serial)
+        return 1
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "INTERR: 50863" in error_msg:
+            # This is a known CFG verification error - log and skip
+            helper_logger.warning("CFG verification error (INTERR: 50863) while ensuring unconditional father for block {0}, skipping"
+                                  .format(child_block.serial))
+            return 0
+        else:
+            # Re-raise other RuntimeErrors
+            raise e

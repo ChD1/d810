@@ -9,6 +9,12 @@ from d810.hexrays_hooks import InstructionDefUseCollector
 from d810.hexrays_helpers import equal_mops_ignore_size, get_mop_index, get_blk_index
 from d810.hexrays_formatters import format_minsn_t, format_mop_t
 
+try:
+    from d810.advanced_optimizations import get_cfg_cache
+    CFG_CACHE_AVAILABLE = False  # TEMPORARILY DISABLED - causes 2x slowdown due to invalidation overhead
+except ImportError:
+    CFG_CACHE_AVAILABLE = False
+
 # This module can be use to find the instruction that define the value of a mop. Basically, you:
 # 1 - Create a MopTracker object with the list of mops to search
 # 2 - Call search_backward while specifying the instruction where the search should start
@@ -213,6 +219,17 @@ class MopTracker(object):
                      .format(["{0}: {1:x}".format(format_mop_t(x[0]), x[1]) for x in self.constant_mops]))
         self.mba = blk.mba
         self.avoid_list = avoid_list if avoid_list else []
+
+        if CFG_CACHE_AVAILABLE and not stop_at_first_duplication and must_use_pred is None:
+            cfg_cache = get_cfg_cache()
+            cfg_cache.invalidate_on_cfg_change(self.mba)
+
+            mop_list_key = str([format_mop_t(x) for x in self._unresolved_mops])
+            cached, result = cfg_cache.get_search_result(blk.serial, mop_list_key, "backward")
+            if cached:
+                logger.debug(f"CFG Cache HIT for block {blk.serial}")
+                return result
+
         blk_with_multiple_pred = self.search_until_multiple_predecessor(blk, ins)
         if self.is_resolved():
             logger.debug("MopTracker is resolved:  {0}".format(self.history.block_serial_path))
@@ -248,6 +265,13 @@ class MopTracker(object):
                 new_tracker = self.get_copy()
                 possible_histories += new_tracker.search_backward(self.mba.get_mblock(blk_pred_serial), None,
                                                                   self.avoid_list, must_use_pred)
+
+        if CFG_CACHE_AVAILABLE and not stop_at_first_duplication and must_use_pred is None:
+            cfg_cache = get_cfg_cache()
+            mop_list_key = str([format_mop_t(x) for x in self._unresolved_mops])
+            cfg_cache.store_search_result(blk.serial, mop_list_key, "backward", possible_histories)
+            logger.debug(f"CFG Cache STORE for block {blk.serial}")
+
         return possible_histories
 
     def search_until_multiple_predecessor(self, blk: mblock_t, ins: Union[None, minsn_t] = None) -> Union[None, mblock_t]:

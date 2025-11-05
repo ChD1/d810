@@ -7,8 +7,6 @@ CTYPE_UNSIGNED_TABLE = {1: ctypes.c_uint8, 2: ctypes.c_uint16, 4: ctypes.c_uint3
 
 
 def get_all_subclasses(python_class):
-    python_class.__subclasses__()
-
     subclasses = set()
     check_these = [python_class]
 
