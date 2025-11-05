@@ -72,6 +72,11 @@
       "config": {}
     },
     {
+      "name": "AddRule1",
+      "is_activated": true,
+      "config": {}
+    },
+    {
       "name": "And1_MbaRule_1",
       "is_activated": true,
       "config": {}
@@ -337,6 +342,41 @@
       "config": {}
     },
     {
+      "name": "CstSimplificationRule23",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "CstSimplificationRule24",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "CstSimplificationRule25",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "CstSimplificationRule26",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "CstSimplificationRule27",
+      "is_activated": false,
+      "config": {}
+    },
+    {
+      "name": "CstSimplificationRule28",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "CstSimplificationRule29",
+      "is_activated": true,
+      "config": {}
+    },
+    {
       "name": "CstSimplificationRule3",
       "is_activated": true,
       "config": {}
@@ -413,6 +453,11 @@
     },
     {
       "name": "Mul_MbaRule_4",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "ModRule1",
       "is_activated": true,
       "config": {}
     },
@@ -597,6 +642,56 @@
       "config": {}
     },
     {
+      "name": "PredOdd3",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredOdd4",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredOdd5",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredOdd6",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "SumRule1",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "SumRule2",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredSetzXdu1",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredSetzXdu2",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredSetnzXdu1",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "PredSetnzXdu2",
+      "is_activated": true,
+      "config": {}
+    },
+    {
       "name": "PredOr1_Rule_1",
       "is_activated": true,
       "config": {}
@@ -658,6 +753,11 @@
     },
     {
       "name": "PredSetzRule3",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "ReluRule1",
       "is_activated": true,
       "config": {}
     },
@@ -833,6 +933,11 @@
     },
     {
       "name": "Xor_SpecialConstantRule_2",
+      "is_activated": true,
+      "config": {}
+    },
+    {
+      "name": "XorRule1",
       "is_activated": true,
       "config": {}
     },

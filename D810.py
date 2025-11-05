@@ -31,20 +31,37 @@ class D810Plugin(idaapi.plugin_t):
         if self.initialized:
             self.term()
 
-        self.d810_config = D810Configuration()
+        try:
+            self.d810_config = D810Configuration()
+        except Exception as e:
+            print("D-810 configuration error: {0}".format(e))
+            return
 
-        #TO-DO: if [...].get raises an exception because log_dir is not found, handle exception
-        real_log_dir = os.path.join(self.d810_config.get("log_dir"), D810_LOG_DIR_NAME)
+        try:
+            log_dir = self.d810_config.get("log_dir")
+            if log_dir is None:
+                log_dir = os.path.dirname(os.path.abspath(__file__))
+            real_log_dir = os.path.join(log_dir, D810_LOG_DIR_NAME)
+        except (KeyError, Exception) as e:
+            print("D-810 error getting log_dir: {0}".format(e))
+            return
 
-        #TO-DO: if [...].get raises an exception because erase_logs_on_reload is not found, handle exception
-        if self.d810_config.get("erase_logs_on_reload"):
-            clear_logs(real_log_dir)
+        try:
+            erase_logs = self.d810_config.get("erase_logs_on_reload")
+            if erase_logs:
+                clear_logs(real_log_dir)
+        except (KeyError, Exception) as e:
+            print("D-810 warning: could not erase logs: {0}".format(e))
 
-        configure_loggers(real_log_dir)
-        self.state = D810State(self.d810_config)
-        print("D-810 reloading...")
-        self.state.start_plugin()
-        self.initialized = True
+        try:
+            configure_loggers(real_log_dir)
+            self.state = D810State(self.d810_config)
+            print("D-810 reloading...")
+            self.state.start_plugin()
+            self.initialized = True
+        except Exception as e:
+            print("D-810 initialization error: {0}".format(e))
+            self.initialized = False
 
 
     # IDA API methods: init, run, term
@@ -53,9 +70,15 @@ class D810Plugin(idaapi.plugin_t):
             print("D-810 need Hex-Rays decompiler. Skipping")
             return idaapi.PLUGIN_SKIP
 
-        kv = ida_kernwin.get_kernel_version().split(".")
-        if (int(kv[0]) < 7) or (int(kv[1]) < 5):
-            print("D-810 need IDA version >= 7.5. Skipping")
+        try:
+            kv = ida_kernwin.get_kernel_version().split(".")
+            major = int(kv[0])
+            minor = int(kv[1]) if len(kv) > 1 else 0
+            if major < 7 or (major == 7 and minor < 5):
+                print("D-810 needs IDA version >= 7.5. Current version: {0}.{1}. Skipping".format(major, minor))
+                return idaapi.PLUGIN_SKIP
+        except (ValueError, IndexError) as e:
+            print("D-810 error checking IDA version: {0}".format(e))
             return idaapi.PLUGIN_SKIP
         print("D-810 initialized (version {0})".format(D810_VERSION))
         return idaapi.PLUGIN_OK

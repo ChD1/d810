@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import List, Union, Dict, Tuple
+from functools import lru_cache
 
 from ida_hexrays import *
 
@@ -11,24 +12,53 @@ from d810.hexrays_helpers import OPCODES_INFO, MBA_RELATED_OPCODES, Z3_SPECIAL_O
 from d810.hexrays_formatters import format_minsn_t, format_mop_t
 from d810.errors import AstEvaluationException
 
+try:
+    from d810.optimizations import AST_OPCODE_EVALUATORS, FastAstCache
+    OPTIMIZATIONS_AVAILABLE = True
+except ImportError:
+    OPTIMIZATIONS_AVAILABLE = False
+
 logger = logging.getLogger('D810')
 
+_ast_cache = FastAstCache() if OPTIMIZATIONS_AVAILABLE else None
 
-def check_and_add_to_list(new_ast: Union[AstNode, AstLeaf], known_ast_list: List[Union[AstNode, AstLeaf]]):
-    is_new_ast_known = False
-    for existing_elt in known_ast_list:
-        if equal_mops_ignore_size(new_ast.mop, existing_elt.mop):
-            new_ast.ast_index = existing_elt.ast_index
-            is_new_ast_known = True
-            break
 
-    if not is_new_ast_known:
+def _get_mop_key(mop: mop_t):
+    if mop is None:
+        return None
+    if mop.t == mop_n:
+        return (mop.t, mop.size, mop.nnn.value)
+    elif mop.t == mop_r:
+        return (mop.t, mop.size, mop.r)
+    elif mop.t == mop_S:
+        return (mop.t, mop.size, mop.s.off)
+    return (mop.t, mop.size, id(mop))
+
+
+def check_and_add_to_list(new_ast: Union[AstNode, AstLeaf], known_ast_list: List[Union[AstNode, AstLeaf]],
+                          known_ast_dict: Dict = None):
+    if known_ast_dict is None:
+        for existing_elt in known_ast_list:
+            if equal_mops_ignore_size(new_ast.mop, existing_elt.mop):
+                new_ast.ast_index = existing_elt.ast_index
+                return
         ast_index = len(known_ast_list)
         new_ast.ast_index = ast_index
         known_ast_list.append(new_ast)
+    else:
+        mop_key = _get_mop_key(new_ast.mop)
+        if mop_key in known_ast_dict:
+            existing_elt = known_ast_dict[mop_key]
+            new_ast.ast_index = existing_elt.ast_index
+        else:
+            ast_index = len(known_ast_list)
+            new_ast.ast_index = ast_index
+            known_ast_list.append(new_ast)
+            known_ast_dict[mop_key] = new_ast
 
 
-def mop_to_ast_internal(mop: mop_t, ast_list: List[Union[AstNode, AstLeaf]]) -> Union[None, AstNode, AstLeaf]:
+def mop_to_ast_internal(mop: mop_t, ast_list: List[Union[AstNode, AstLeaf]],
+                        ast_dict: Dict = None) -> Union[None, AstNode, AstLeaf]:
     if mop is None:
         return None
 
@@ -38,21 +68,24 @@ def mop_to_ast_internal(mop: mop_t, ast_list: List[Union[AstNode, AstLeaf]]) -> 
         dest_size = mop.size if mop.t != mop_d else mop.d.d.size
         tree.dest_size = dest_size
     else:
-        left_ast = mop_to_ast_internal(mop.d.l, ast_list)
-        right_ast = mop_to_ast_internal(mop.d.r, ast_list)
-        dst_ast = mop_to_ast_internal(mop.d.d, ast_list)
+        left_ast = mop_to_ast_internal(mop.d.l, ast_list, ast_dict)
+        right_ast = mop_to_ast_internal(mop.d.r, ast_list, ast_dict)
+        dst_ast = mop_to_ast_internal(mop.d.d, ast_list, ast_dict)
         tree = AstNode(mop.d.opcode, left_ast, right_ast, dst_ast)
         tree.mop = mop
         tree.dest_size = mop.d.d.size
         tree.ea = mop.d.ea
 
-    check_and_add_to_list(tree, ast_list)
+    check_and_add_to_list(tree, ast_list, ast_dict)
     return tree
 
 
 def mop_to_ast(mop: mop_t) -> Union[None, AstNode, AstLeaf]:
-    mop_ast = mop_to_ast_internal(mop, [])
-    mop_ast.compute_sub_ast()
+    ast_list = []
+    ast_dict = {}
+    mop_ast = mop_to_ast_internal(mop, ast_list, ast_dict)
+    if mop_ast is not None:
+        mop_ast.compute_sub_ast()
     return mop_ast
 
 
@@ -277,7 +310,16 @@ class AstNode(dict):
     def evaluate(self, dict_index_to_value):
         if self.ast_index in dict_index_to_value:
             return dict_index_to_value[self.ast_index]
+
         res_mask = AND_TABLE[self.dest_size]
+
+        if OPTIMIZATIONS_AVAILABLE and self.opcode in AST_OPCODE_EVALUATORS:
+            left_val = self.left.evaluate(dict_index_to_value) if self.left else 0
+            right_val = self.right.evaluate(dict_index_to_value) if self.right else 0
+            left_size = self.left.dest_size if self.left else self.dest_size
+            right_size = self.right.dest_size if self.right else self.dest_size
+            return AST_OPCODE_EVALUATORS[self.opcode]([left_val, right_val], res_mask, [left_size, right_size])
+
         if self.opcode == m_mov:
             return (self.left.evaluate(dict_index_to_value)) & res_mask
         elif self.opcode == m_neg:
@@ -382,6 +424,125 @@ class AstNode(dict):
             return res & res_mask
         else:
             raise AstEvaluationException("Can't evaluate opcode: {0}".format(self.opcode))
+
+    def simplify(self):
+        if self.left is not None:
+            self.left = self.left.simplify()
+        if self.right is not None:
+            self.right = self.right.simplify()
+
+        left_is_const = isinstance(self.left, AstLeaf) and self.left.is_constant() if self.left else False
+        right_is_const = isinstance(self.right, AstLeaf) and self.right.is_constant() if self.right else False
+        left_val = self.left.value if left_is_const else None
+        right_val = self.right.value if right_is_const else None
+
+        if left_is_const and right_is_const:
+            try:
+                result_val = self.evaluate({})
+                result_leaf = AstLeaf("const")
+                result_mop = mop_t()
+                result_mop.make_number(result_val, self.dest_size)
+                result_leaf.mop = result_mop
+                result_leaf.dest_size = self.dest_size
+                result_leaf.ea = self.ea
+                return result_leaf
+            except:
+                pass
+
+        if self.opcode == m_add:
+            if right_is_const and right_val == 0:
+                return self.left
+            if left_is_const and left_val == 0:
+                return self.right
+            if left_is_const and right_is_const:
+                return self._create_const_leaf((left_val + right_val) & AND_TABLE[self.dest_size])
+            if isinstance(self.left, AstNode) and self.left.opcode == m_add:
+                if isinstance(self.left.right, AstLeaf) and self.left.right.is_constant() and right_is_const:
+                    c1 = self.left.right.value
+                    c2 = right_val
+                    combined = (c1 + c2) & AND_TABLE[self.dest_size]
+                    return AstNode(m_add, self.left.left, self._create_const_leaf(combined))
+
+        elif self.opcode == m_sub:
+            if right_is_const and right_val == 0:
+                return self.left
+            if self.left == self.right:
+                return self._create_const_leaf(0)
+
+        elif self.opcode == m_mul:
+            if right_is_const:
+                if right_val == 0:
+                    return self._create_const_leaf(0)
+                if right_val == 1:
+                    return self.left
+            if left_is_const:
+                if left_val == 0:
+                    return self._create_const_leaf(0)
+                if left_val == 1:
+                    return self.right
+            if isinstance(self.left, AstNode) and self.left.opcode == m_mul:
+                if isinstance(self.left.right, AstLeaf) and self.left.right.is_constant() and right_is_const:
+                    c1 = self.left.right.value
+                    c2 = right_val
+                    combined = (c1 * c2) & AND_TABLE[self.dest_size]
+                    return AstNode(m_mul, self.left.left, self._create_const_leaf(combined))
+
+        elif self.opcode in [m_udiv, m_sdiv]:
+            if right_is_const and right_val == 1:
+                return self.left
+            if left_is_const and left_val == 0:
+                return self._create_const_leaf(0)
+
+        elif self.opcode == m_or:
+            if right_is_const and right_val == 0:
+                return self.left
+            if left_is_const and left_val == 0:
+                return self.right
+            if right_is_const and right_val == AND_TABLE[self.dest_size]:
+                return self._create_const_leaf(AND_TABLE[self.dest_size])
+            if self.left == self.right:
+                return self.left
+
+        elif self.opcode == m_and:
+            if right_is_const and right_val == 0:
+                return self._create_const_leaf(0)
+            if left_is_const and left_val == 0:
+                return self._create_const_leaf(0)
+            if right_is_const and right_val == AND_TABLE[self.dest_size]:
+                return self.left
+            if self.left == self.right:
+                return self.left
+
+        elif self.opcode == m_xor:
+            if right_is_const and right_val == 0:
+                return self.left
+            if left_is_const and left_val == 0:
+                return self.right
+            if self.left == self.right:
+                return self._create_const_leaf(0)
+
+        elif self.opcode == m_bnot:
+            if isinstance(self.left, AstNode) and self.left.opcode == m_bnot:
+                return self.left.left
+
+        elif self.opcode == m_neg:
+            if isinstance(self.left, AstNode) and self.left.opcode == m_neg:
+                return self.left.left
+
+        elif self.opcode in [m_shl, m_shr, m_sar]:
+            if right_is_const and right_val == 0:
+                return self.left
+
+        return self
+
+    def _create_const_leaf(self, value):
+        result_leaf = AstLeaf("const")
+        result_mop = mop_t()
+        result_mop.make_number(value & AND_TABLE[self.dest_size], self.dest_size)
+        result_leaf.mop = result_mop
+        result_leaf.dest_size = self.dest_size
+        result_leaf.ea = self.ea
+        return result_leaf
 
     def get_depth_signature(self, depth):
         if depth == 1:
@@ -534,6 +695,9 @@ class AstLeaf(object):
         if self.is_constant():
             return self.mop.nnn.value
         return dict_index_to_value.get(self.ast_index)
+
+    def simplify(self):
+        return self
 
     def get_depth_signature(self, depth):
         if depth == 1:

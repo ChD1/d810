@@ -139,12 +139,32 @@ class D810State(object):
         self.projects[old_config_index] = new_config
 
     def del_project(self, config: ProjectConfiguration):
+        if config not in self.projects:
+            logger.warning("Project configuration not found in projects list")
+            return
+
         self.projects.remove(config)
-        self.d810_config.get("configurations").remove(config.path)
-        self.d810_config.save()
-        os.remove(config.path)
+        try:
+            self.d810_config.get("configurations").remove(config.path)
+            self.d810_config.save()
+        except (ValueError, Exception) as e:
+            logger.error("Error removing project from config: {0}".format(e))
+
+        try:
+            if os.path.exists(config.path):
+                os.remove(config.path)
+        except OSError as e:
+            logger.error("Error deleting project file {0}: {1}".format(config.path, e))
 
     def load_project(self, project_index: int):
+        if not self.projects:
+            logger.error("No projects available to load")
+            return
+
+        if project_index < 0 or project_index >= len(self.projects):
+            logger.warning("Invalid project index {0}. Using index 0 instead.".format(project_index))
+            project_index = 0
+
         self.current_project_index = project_index
         self.current_project = self.projects[project_index]
         self.current_ins_rules = []
@@ -153,18 +173,30 @@ class D810State(object):
         for rule in self.known_ins_rules:
             for rule_conf in self.current_project.ins_rules:
                 if rule.name == rule_conf.name:
-                    rule.configure(rule_conf.config)
-                    rule.set_log_dir(self.log_dir)
-                    self.current_ins_rules.append(rule)
-        logger.debug("Instruction rules configured")
+                    try:
+                        rule.configure(rule_conf.config)
+                        rule.set_log_dir(self.log_dir)
+                        self.current_ins_rules.append(rule)
+                    except Exception as e:
+                        logger.error("Error configuring rule {0}: {1}".format(rule.name, e))
+        logger.debug("Instruction rules configured: {0}".format(len(self.current_ins_rules)))
+
         for blk_rule in self.known_blk_rules:
             for rule_conf in self.current_project.blk_rules:
                 if blk_rule.name == rule_conf.name:
-                    blk_rule.configure(rule_conf.config)
-                    blk_rule.set_log_dir(self.log_dir)
-                    self.current_blk_rules.append(blk_rule)
-        logger.debug("Block rules configured")
-        self.manager.configure(**self.current_project.additional_configuration)
+                    try:
+                        blk_rule.configure(rule_conf.config)
+                        blk_rule.set_log_dir(self.log_dir)
+                        self.current_blk_rules.append(blk_rule)
+                    except Exception as e:
+                        logger.error("Error configuring block rule {0}: {1}".format(blk_rule.name, e))
+        logger.debug("Block rules configured: {0}".format(len(self.current_blk_rules)))
+
+        try:
+            self.manager.configure(**self.current_project.additional_configuration)
+        except Exception as e:
+            logger.error("Error configuring manager: {0}".format(e))
+
         logger.debug("Project loaded.")
 
     def start_d810(self):

@@ -23,10 +23,14 @@ def get_all_subclasses(python_class):
 
 
 def unsigned_to_signed(unsigned_value, nb_bytes):
+    if nb_bytes not in CTYPE_SIGNED_TABLE:
+        raise ValueError("Invalid nb_bytes: {0}. Must be one of {1}".format(nb_bytes, list(CTYPE_SIGNED_TABLE.keys())))
     return CTYPE_SIGNED_TABLE[nb_bytes](unsigned_value).value
 
 
 def signed_to_unsigned(signed_value, nb_bytes):
+    if nb_bytes not in CTYPE_UNSIGNED_TABLE:
+        raise ValueError("Invalid nb_bytes: {0}. Must be one of {1}".format(nb_bytes, list(CTYPE_UNSIGNED_TABLE.keys())))
     return CTYPE_UNSIGNED_TABLE[nb_bytes](signed_value).value
 
 

@@ -2,7 +2,7 @@ from ida_hexrays import *
 
 from d810.optimizers.instructions.pattern_matching.handler import PatternMatchingRule
 from d810.ast import AstLeaf, AstConstant, AstNode
-from d810.hexrays_helpers import equal_bnot_mop, SUB_TABLE, AND_TABLE
+from d810.hexrays_helpers import equal_bnot_mop, SUB_TABLE, AND_TABLE, equal_mops_ignore_size
 
 
 # PredSetnzRule1: (x_0 | c_1) != c_2 ==> 1 if c_1 | c_2 != c_2
@@ -400,4 +400,267 @@ class PredOr1_Rule_1(PatternMatchingRule):
     def check_candidate(self, candidate):
         candidate.add_constant_leaf("val_1", 1, candidate["x_0"].mop.size)
         candidate.add_constant_leaf("val_2", 2, candidate["x_0"].mop.size)
+        return True
+
+
+class PredOdd3(PatternMatchingRule):
+    PATTERN = AstNode(m_xdu,
+                      AstNode(m_and,
+                              AstNode(m_mul,
+                                      AstNode(m_sub,
+                                              AstNode(m_low, AstLeaf("x_0")),
+                                              AstConstant("1", 1)),
+                                      AstNode(m_low, AstLeaf("x_0"))),
+                              AstConstant("1", 1)))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_0"))
+
+    def check_candidate(self, candidate):
+        candidate.add_constant_leaf("val_0", 0, candidate.size)
+        return True
+
+
+class PredOdd4(PatternMatchingRule):
+    PATTERN = AstNode(m_xdu,
+                      AstNode(m_and,
+                              AstNode(m_mul,
+                                      AstNode(m_sub,
+                                              AstLeaf("x_0"),
+                                              AstConstant("1", 1)),
+                                      AstNode(m_low, AstLeaf("x_0"))),
+                              AstConstant("1", 1)))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_0"))
+
+    def check_candidate(self, candidate):
+        candidate.add_constant_leaf("val_0", 0, candidate.size)
+        return True
+
+
+class PredSetzXdu1(PatternMatchingRule):
+    PATTERN = AstNode(m_setz,
+                      AstNode(m_and,
+                              AstNode(m_xdu,
+                                      AstNode(m_or,
+                                              AstLeaf("x_0"),
+                                              AstConstant("c_1"))),
+                              AstConstant("mask")),
+                      AstConstant("0", 0))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_result"))
+
+    def check_candidate(self, candidate):
+        const_val = candidate["c_1"].value
+        mask_val = candidate["mask"].value
+        if (const_val & mask_val) != 0:
+            candidate.add_constant_leaf("val_result", 0, candidate.size)
+            return True
+        return False
+
+
+class PredSetzXdu2(PatternMatchingRule):
+    PATTERN = AstNode(m_setz,
+                      AstNode(m_and,
+                              AstNode(m_xdu,
+                                      AstNode(m_xor,
+                                              AstLeaf("x_0"),
+                                              AstConstant("c_1"))),
+                              AstConstant("mask")),
+                      AstConstant("0", 0))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_result"))
+
+    def check_candidate(self, candidate):
+        const_val = candidate["c_1"].value
+        mask_val = candidate["mask"].value
+        xor_masked = (const_val ^ 0) & mask_val
+        if xor_masked != 0 and xor_masked != mask_val:
+            candidate.add_constant_leaf("val_result", 0, candidate.size)
+            return True
+        return False
+
+
+class PredSetnzXdu1(PatternMatchingRule):
+    PATTERN = AstNode(m_setnz,
+                      AstNode(m_and,
+                              AstNode(m_xdu,
+                                      AstNode(m_or,
+                                              AstLeaf("x_0"),
+                                              AstConstant("c_1"))),
+                              AstConstant("mask")),
+                      AstConstant("0", 0))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_result"))
+
+    def check_candidate(self, candidate):
+        const_val = candidate["c_1"].value
+        mask_val = candidate["mask"].value
+        if (const_val & mask_val) != 0:
+            candidate.add_constant_leaf("val_result", 1, candidate.size)
+            return True
+        return False
+
+
+class PredSetnzXdu2(PatternMatchingRule):
+    PATTERN = AstNode(m_setnz,
+                      AstNode(m_and,
+                              AstNode(m_xdu,
+                                      AstNode(m_xor,
+                                              AstLeaf("x_0"),
+                                              AstConstant("c_1"))),
+                              AstConstant("mask")),
+                      AstConstant("0", 0))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_result"))
+
+    def check_candidate(self, candidate):
+        const_val = candidate["c_1"].value
+        mask_val = candidate["mask"].value
+        xor_masked = (const_val ^ 0) & mask_val
+        if xor_masked != 0 and xor_masked != mask_val:
+            candidate.add_constant_leaf("val_result", 1, candidate.size)
+            return True
+        return False
+
+
+class PredOdd5(PatternMatchingRule):
+    """ xdu((x-1)*x) & 1  ==> 0 """
+    PATTERN = AstNode(m_and,
+                      AstNode(m_xdu,
+                              AstNode(m_mul,
+                                      AstNode(m_sub,
+                                              AstLeaf('x_0'),
+                                              AstConstant('c_1', 1)),
+                                      AstLeaf('x_0'))),
+                      AstConstant('c_2', 1))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant('val_0'))
+
+    def check_candidate(self, candidate):
+        candidate.add_constant_leaf("val_0", 0, candidate.size)
+        return True
+
+
+class PredOdd6(PatternMatchingRule):
+    """ xdu(((x-1)*x) & 1) -> 0 """
+    PATTERN = AstNode(m_xdu,
+                      AstNode(m_and,
+                              AstNode(m_mul,
+                                      AstNode(m_sub,
+                                              AstLeaf("x_0"),
+                                              AstConstant("c_1", 1)),
+                                      AstLeaf("x_1")),
+                              AstConstant("c_2", 1)))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant('val_0'))
+
+    def check_candidate(self, candidate):
+        if not equal_mops_ignore_size(candidate["x_0"].mop, candidate["x_1"].mop):
+            return False
+        candidate.add_constant_leaf("val_0", 0, candidate.size)
+        return True
+
+
+class SumRule1(PatternMatchingRule):
+    DESCRIPTION = "(x ^ y) + ((x & y) << 1) => x + y"
+    PATTERN = AstNode(m_add,
+                      AstNode(m_xor,
+                              AstLeaf('x_0'),
+                              AstLeaf('x_1')),
+                      AstNode(m_shl,
+                              AstNode(m_and,
+                                      AstLeaf('x_0'),
+                                      AstLeaf('x_1')),
+                              AstConstant('c_1', 1)))
+    REPLACEMENT_PATTERN = AstNode(m_add,
+                                  AstLeaf('x_0'),
+                                  AstLeaf('x_1'))
+
+    def check_candidate(self, candidate):
+        return True
+
+
+class SumRule2(PatternMatchingRule):
+    DESCRIPTION = "((x & y) << 1) + (x ^ y) => x + y"
+    PATTERN = AstNode(m_add,
+                      AstNode(m_shl,
+                              AstNode(m_and,
+                                      AstLeaf('x_0'),
+                                      AstLeaf('x_1')),
+                              AstConstant('c_1', 1)),
+                      AstNode(m_xor,
+                              AstLeaf('x_0'),
+                              AstLeaf('x_1')))
+    REPLACEMENT_PATTERN = AstNode(m_add,
+                                  AstLeaf('x_0'),
+                                  AstLeaf('x_1'))
+
+    def check_candidate(self, candidate):
+        return True
+
+
+class XorRule1(PatternMatchingRule):
+    DESCRIPTION = "(x | y) - (x & y) => x ^ y"
+    PATTERN = AstNode(m_sub,
+                      AstNode(m_or,
+                              AstLeaf('x_0'),
+                              AstLeaf('x_1')),
+                      AstNode(m_and,
+                              AstLeaf('x_0'),
+                              AstLeaf('x_1')))
+    REPLACEMENT_PATTERN = AstNode(m_xor,
+                                  AstLeaf('x_0'),
+                                  AstLeaf('x_1'))
+
+    def check_candidate(self, candidate):
+        return True
+
+
+class AddRule1(PatternMatchingRule):
+    DESCRIPTION = "(x & y) + (x | y) => x + y"
+    PATTERN = AstNode(m_add,
+                      AstNode(m_and,
+                              AstLeaf('x_0'),
+                              AstLeaf('x_1')),
+                      AstNode(m_or,
+                              AstLeaf('x_0'),
+                              AstLeaf('x_1')))
+    REPLACEMENT_PATTERN = AstNode(m_add,
+                                  AstLeaf('x_0'),
+                                  AstLeaf('x_1'))
+
+    def check_candidate(self, candidate):
+        return True
+
+
+class ModRule1(PatternMatchingRule):
+    DESCRIPTION = "(x + (((y /u x) * x) - y)) => (x - (y % x))"
+    PATTERN = AstNode(m_add,
+                      AstLeaf('x_0'),
+                      AstNode(m_sub,
+                              AstNode(m_mul,
+                                      AstNode(m_udiv,
+                                              AstLeaf('x_1'),
+                                              AstLeaf('x_0')),
+                                      AstLeaf('x_0')),
+                              AstLeaf('x_1')))
+    REPLACEMENT_PATTERN = AstNode(m_sub,
+                                  AstLeaf('x_0'),
+                                  AstNode(m_umod,
+                                          AstLeaf('x_1'),
+                                          AstLeaf('x_0')))
+
+    def check_candidate(self, candidate):
+        return True
+
+
+class ReluRule1(PatternMatchingRule):
+    DESCRIPTION = "x & ~(x >>a 31) => __max(x, 0)"
+    PATTERN = AstNode(m_and,
+                      AstLeaf('x_0'),
+                      AstNode(m_bnot,
+                              AstNode(m_sar,
+                                      AstLeaf('x_0'),
+                                      AstConstant('31', 31))))
+
+    def __init__(self):
+        super().__init__()
+        self.REPLACEMENT_PATTERN = AstNode(m_call,
+                                           AstNode(cot_helper, "__max"),
+                                           AstLeaf('x_0'),
+                                           AstConstant('0', 0))
+
+    def check_candidate(self, candidate):
         return True

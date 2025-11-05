@@ -277,4 +277,11 @@ class HexraysDecompilationHook(Hexrays_Hooks):
         main_logger.info("glbopt finished for function at 0x{0:x}".format(mba.entry_ea))
         self.manager.instruction_optimizer.show_rule_usage_statistic()
         self.manager.block_optimizer.show_rule_usage_statistic()
+
+        try:
+            from d810.advanced_optimizations import print_cache_stats
+            print_cache_stats()
+        except ImportError:
+            pass
+
         return 0

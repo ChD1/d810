@@ -40,6 +40,10 @@ class MicroCodeInterpreter(object):
             return self._eval_call(ins, environment)
         elif ins.opcode == m_icall:
             return self._eval_call(ins, environment)
+        elif ins.opcode == m_nop:
+            return None
+        if ins.d.t == mop_z:
+            return None
         res_mask = AND_TABLE[ins.d.size]
         if ins.opcode == m_ldx:
             return self._eval_load(ins, environment)

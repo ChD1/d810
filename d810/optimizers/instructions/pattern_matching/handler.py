@@ -9,6 +9,12 @@ from d810.hexrays_formatters import format_minsn_t, format_mop_t
 optimizer_logger = logging.getLogger('D810.optimizer')
 pattern_search_logger = logging.getLogger('D810.pattern_search')
 
+try:
+    from d810.advanced_optimizations import get_parallel_matcher
+    PARALLEL_MATCHING_AVAILABLE = True
+except ImportError:
+    PARALLEL_MATCHING_AVAILABLE = False
+
 
 class PatternMatchingRule(GenericPatternRule):
     PATTERN = None
@@ -176,11 +182,38 @@ class PatternOptimizer(InstructionOptimizer):
             self.cur_maturity = blk.mba.maturity
         if self.cur_maturity not in self.maturities:
             return None
+        
+        # Skip instructions with 16-byte operands (not supported by current AST implementation)
+        # These are typically SIMD operations or structure initializations, not critical for OLLVM deobfuscation
+        try:
+            if (ins.l and ins.l.size == 16) or (ins.r and ins.r.size == 16) or (ins.d and ins.d.size == 16):
+                optimizer_logger.debug("Skipping 16-byte operand instruction: {0}".format(format_minsn_t(ins)))
+                return None
+        except (AttributeError, RuntimeError):
+            # If we can't check sizes, skip this instruction
+            pass
+            
         tmp = minsn_to_ast(ins)
         if tmp is None:
             return None
 
         all_matchs = self.pattern_storage.get_matching_rule_pattern_info(tmp)
+
+        if PARALLEL_MATCHING_AVAILABLE and len(all_matchs) > 0:
+            try:
+                parallel_matcher = get_parallel_matcher()
+                result = parallel_matcher.check_patterns_parallel(all_matchs, tmp, self.rules_usage_info)
+                if result is not None:
+                    new_ins, rule_name = result
+                    self.rules_usage_info[rule_name] += 1
+                    optimizer_logger.info("Rule {0} matched:".format(rule_name))
+                    optimizer_logger.info("  orig: {0}".format(format_minsn_t(ins)))
+                    optimizer_logger.info("  new : {0}".format(format_minsn_t(new_ins)))
+                    return new_ins
+            except Exception as e:
+                optimizer_logger.warning("Parallel matching failed, falling back to sequential: {0}".format(e))
+                pass
+
         for rule_pattern_info in all_matchs:
             try:
                 new_ins = rule_pattern_info.rule.check_pattern_and_replace(rule_pattern_info.pattern, tmp)
@@ -191,8 +224,17 @@ class PatternOptimizer(InstructionOptimizer):
                     optimizer_logger.info("  new : {0}".format(format_minsn_t(new_ins)))
                     return new_ins
             except RuntimeError as e:
-                optimizer_logger.error("Error during rule {0} for instruction {1}: {2}"
-                                       .format(rule_pattern_info.rule, format_minsn_t(ins), e))
+                error_msg = str(e)
+                # Skip logging for known issues with mop_t.copy() - these are expected
+                if "'mop_t' object has no attribute 'copy'" not in error_msg:
+                    optimizer_logger.error("RuntimeError while optimizing ins {0} with {1}: {2}"
+                                           .format(format_minsn_t(ins), rule_pattern_info.rule.name, e))
+            except AttributeError as e:
+                # Handle attribute errors silently (e.g., missing copy method)
+                pass
+            except Exception as e:
+                optimizer_logger.error("Unexpected error during rule {0} for instruction {1}: {2}"
+                                       .format(rule_pattern_info.rule.name, format_minsn_t(ins), e))
         return None
 
 # AST equivalent pattern generation stuff

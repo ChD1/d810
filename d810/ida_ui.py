@@ -4,7 +4,7 @@ import json
 import logging
 import idaapi
 import ida_kernwin
-from PyQt5 import QtCore, QtWidgets, QtGui
+from PySide6 import QtCore, QtWidgets, QtGui
 
 from d810.conf import ProjectConfiguration, RuleConfiguration
 
@@ -416,13 +416,14 @@ class D810ConfigForm_t(ida_kernwin.PluginForm):
         self.cfg_ins_preview.setSortingEnabled(True)
         # self.cfg_ins_preview.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
         i = 0
+        flags = QtCore.Qt.ItemFlag(QtCore.Qt.ItemIsSelectable.value | QtCore.Qt.ItemIsEnabled.value)
         for rule in self.state.current_ins_rules:
             cell_file_path = QtWidgets.QTableWidgetItem(rule.name)
-            cell_file_path.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            cell_file_path.setFlags(flags)
             cell_rule_description = QtWidgets.QTableWidgetItem(rule.description)
-            cell_rule_description.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            cell_rule_description.setFlags(flags)
             cell_rule_config = QtWidgets.QTableWidgetItem(json.dumps(rule.config))
-            cell_rule_config.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            cell_rule_config.setFlags(flags)
             self.cfg_ins_preview.setItem(i, 0, cell_file_path)
             self.cfg_ins_preview.setItem(i, 1, cell_rule_description)
             self.cfg_ins_preview.setItem(i, 2, cell_rule_config)
@@ -438,13 +439,14 @@ class D810ConfigForm_t(ida_kernwin.PluginForm):
         self.cfg_blk_preview.setSortingEnabled(True)
         # self.cfg_blk_preview.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
         i = 0
+        flags = QtCore.Qt.ItemFlag(QtCore.Qt.ItemIsSelectable.value | QtCore.Qt.ItemIsEnabled.value)
         for rule in self.state.current_blk_rules:
             cell_file_path = QtWidgets.QTableWidgetItem(rule.name)
-            cell_file_path.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            cell_file_path.setFlags(flags)
             cell_rule_description = QtWidgets.QTableWidgetItem(rule.description)
-            cell_rule_description.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            cell_rule_description.setFlags(flags)
             cell_rule_config = QtWidgets.QTableWidgetItem(json.dumps(rule.config))
-            cell_rule_config.setFlags(QtCore.Qt.ItemIsSelectable | QtCore.Qt.ItemIsEnabled)
+            cell_rule_config.setFlags(flags)
             self.cfg_blk_preview.setItem(i, 0, cell_file_path)
             self.cfg_blk_preview.setItem(i, 1, cell_rule_description)
             self.cfg_blk_preview.setItem(i, 2, cell_rule_config)

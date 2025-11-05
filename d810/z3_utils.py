@@ -3,7 +3,7 @@ from typing import List, Union
 from ida_hexrays import *
 
 from d810.hexrays_helpers import get_mop_index
-from d810.hexrays_formatters import format_minsn_t, opcode_to_string
+from d810.hexrays_formatters import format_minsn_t, format_mop_t, opcode_to_string
 from d810.ast import mop_to_ast, minsn_to_ast, AstLeaf, AstNode
 from d810.errors import D810Z3Exception
 
@@ -16,6 +16,12 @@ try:
 except ImportError:
     logger.info("Z3 features disabled. Install Z3 to enable them")
     Z3_INSTALLED = False
+
+try:
+    from d810.advanced_optimizations import get_z3_cache, get_simplification_stats
+    ADVANCED_OPT_AVAILABLE = True
+except ImportError:
+    ADVANCED_OPT_AVAILABLE = False
 
 
 def create_z3_vars(leaf_list: List[AstLeaf]):
@@ -45,6 +51,21 @@ def create_z3_vars(leaf_list: List[AstLeaf]):
 def ast_to_z3_expression(ast: Union[AstNode, AstLeaf], use_bitvecval=False):
     if not Z3_INSTALLED:
         raise D810Z3Exception("Z3 is not installed")
+
+    if ADVANCED_OPT_AVAILABLE:
+        simp_stats = get_simplification_stats()
+        simp_stats.record_call()
+        original_str = str(ast)
+        ast = ast.simplify()
+        simplified_str = str(ast)
+        if original_str != simplified_str:
+            simp_stats.record_simplification("z3_expression")
+            z3_file_logger.info(f"Simplified: {original_str} -> {simplified_str}")
+        elif simp_stats.total_simplify_calls <= 10:
+            z3_file_logger.info(f"No simplification for: {original_str}")
+    else:
+        ast = ast.simplify()
+
     if isinstance(ast, AstLeaf):
         if ast.is_constant():
             return z3.BitVecVal(ast.value, 32)
@@ -84,6 +105,65 @@ def ast_to_z3_expression(ast: Union[AstNode, AstLeaf], use_bitvecval=False):
         return (ast_to_z3_expression(ast.left, use_bitvecval)) >> (ast_to_z3_expression(ast.right, use_bitvecval))
     elif ast.opcode in [m_xdu, m_xds, m_low, m_high]:
         return ast_to_z3_expression(ast.left, use_bitvecval)
+    elif ast.opcode == m_seto:
+        # Overflow flag - for now, return a conservative approximation
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr == right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setae:
+        # Above or equal (unsigned)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(z3.UGE(left_expr, right_expr), z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_seta:
+        # Above (unsigned)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(z3.UGT(left_expr, right_expr), z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_sets:
+        # Sign flag - check if negative
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        return z3.If(left_expr < 0, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setz:
+        # Zero flag (equal)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr == right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setnz:
+        # Not-zero flag (not equal)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr != right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setb:
+        # Below (unsigned less)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(z3.ULT(left_expr, right_expr), z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setbe:
+        # Below or equal (unsigned less or equal)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(z3.ULE(left_expr, right_expr), z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setl:
+        # Less (signed less)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr < right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setle:
+        # Less or equal (signed less or equal)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr <= right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setg:
+        # Greater (signed greater)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr > right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
+    elif ast.opcode == m_setge:
+        # Greater or equal (signed greater or equal)
+        left_expr = ast_to_z3_expression(ast.left, use_bitvecval)
+        right_expr = ast_to_z3_expression(ast.right, use_bitvecval)
+        return z3.If(left_expr >= right_expr, z3.BitVecVal(1, 32), z3.BitVecVal(0, 32))
     raise D810Z3Exception("Z3 evaluation: Unknown opcode {0} for {1}".format(opcode_to_string(ast.opcode), ast))
 
 
@@ -101,23 +181,57 @@ def mop_list_to_z3_expression_list(mop_list: List[mop_t]):
 def z3_check_mop_equality(mop1: mop_t, mop2: mop_t) -> bool:
     if not Z3_INSTALLED:
         raise D810Z3Exception("Z3 is not installed")
-    z3_mop1, z3_mop2 = mop_list_to_z3_expression_list([mop1, mop2])
-    s = z3.Solver()
-    s.add(z3.Not(z3_mop1 == z3_mop2))
-    if s.check().r == -1:
-        return True
-    return False
+
+    if ADVANCED_OPT_AVAILABLE:
+        cache = get_z3_cache()
+        mop1_str = format_mop_t(mop1)
+        mop2_str = format_mop_t(mop2)
+
+        def compute():
+            z3_mop1, z3_mop2 = mop_list_to_z3_expression_list([mop1, mop2])
+            s = cache.get_solver()
+            s.push()
+            s.add(z3.Not(z3_mop1 == z3_mop2))
+            result = s.check().r == -1
+            s.pop()
+            return result
+
+        return cache.check_constraint(mop1_str, mop2_str, "equality", compute)
+    else:
+        z3_mop1, z3_mop2 = mop_list_to_z3_expression_list([mop1, mop2])
+        s = z3.Solver()
+        s.add(z3.Not(z3_mop1 == z3_mop2))
+        if s.check().r == -1:
+            return True
+        return False
 
 
 def z3_check_mop_inequality(mop1: mop_t, mop2: mop_t) -> bool:
     if not Z3_INSTALLED:
         raise D810Z3Exception("Z3 is not installed")
-    z3_mop1, z3_mop2 = mop_list_to_z3_expression_list([mop1, mop2])
-    s = z3.Solver()
-    s.add(z3_mop1 == z3_mop2)
-    if s.check().r == -1:
-        return True
-    return False
+
+    if ADVANCED_OPT_AVAILABLE:
+        cache = get_z3_cache()
+        mop1_str = format_mop_t(mop1)
+        mop2_str = format_mop_t(mop2)
+
+        def compute():
+            z3_mop1, z3_mop2 = mop_list_to_z3_expression_list([mop1, mop2])
+            s = cache.get_solver()
+            s.push()
+            s.add(z3_mop1 == z3_mop2)
+            result = s.check().r == -1
+            s.pop()
+            return result
+
+        return cache.check_constraint(mop1_str, mop2_str, "inequality", compute)
+    else:
+        z3_mop1, z3_mop2 = mop_list_to_z3_expression_list([mop1, mop2])
+        s = z3.Solver()
+        s.add(z3_mop1 == z3_mop2)
+        if s.check().r == -1:
+            return True
+        return False
 
 
 def rename_leafs(leaf_list: List[AstLeaf]) -> List[str]:

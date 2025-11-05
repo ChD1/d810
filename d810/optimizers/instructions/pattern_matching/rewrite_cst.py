@@ -446,3 +446,175 @@ class CstSimplificationRule22(PatternMatchingRule):
         candidate.add_constant_leaf("c_xor_res", candidate["c_xor_1"].value ^ candidate["c_xor_2"].value ^ candidate["bnot_c_and"].value,
                                     candidate["c_xor_1"].size)
         return True
+
+
+class CstSimplificationRule23(PatternMatchingRule):
+    PATTERN = AstNode(m_or,
+                      AstNode(m_and,
+                              AstLeaf("x_0"),
+                              AstConstant("mask_1")),
+                      AstNode(m_and,
+                              AstLeaf("x_1"),
+                              AstConstant("mask_2")))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("val_result"))
+
+    def check_candidate(self, candidate):
+        mask1 = candidate["mask_1"].value
+        mask2 = candidate["mask_2"].value
+        if (mask1 | mask2) == mask2:
+            candidate.add_constant_leaf("val_result", mask2, candidate["mask_1"].size)
+            return True
+        return False
+
+
+class CstSimplificationRule24(PatternMatchingRule):
+    PATTERN = AstNode(m_and,
+                      AstNode(m_or,
+                              AstLeaf("x_0"),
+                              AstConstant("c_or")),
+                      AstConstant("mask"))
+    REPLACEMENT_PATTERN = AstNode(m_or,
+                                  AstNode(m_and,
+                                          AstLeaf("x_0"),
+                                          AstConstant("mask")),
+                                  AstConstant("c_result"))
+
+    def check_candidate(self, candidate):
+        c_result = candidate["c_or"].value & candidate["mask"].value
+        if c_result == 0:
+            return False
+        candidate.add_constant_leaf("c_result", c_result, candidate["c_or"].size)
+        return True
+
+
+class CstSimplificationRule25(PatternMatchingRule):
+    PATTERN = AstNode(m_xor,
+                      AstNode(m_and,
+                              AstLeaf("x_0"),
+                              AstConstant("mask")),
+                      AstConstant("c_xor"))
+    REPLACEMENT_PATTERN = AstNode(m_and,
+                                  AstNode(m_xor,
+                                          AstLeaf("x_0"),
+                                          AstConstant("c_xor")),
+                                  AstConstant("mask"))
+
+    def check_candidate(self, candidate):
+        c_xor_val = candidate["c_xor"].value
+        mask_val = candidate["mask"].value
+
+        if (c_xor_val & mask_val) != c_xor_val:
+            return False
+
+        c_res = c_xor_val & mask_val
+        if (c_res & mask_val) == c_res:
+            return False
+
+        is_small_mask = mask_val in [1, 3, 7, 15, 31, 63, 127, 255, 0xFFFF, 0xFFFFFFFF]
+        return is_small_mask
+
+
+class CstSimplificationRule26(PatternMatchingRule):
+    PATTERN = AstNode(m_and,
+                      AstNode(m_sub,
+                              AstConstant("c_sub"),
+                              AstLeaf("x_0")),
+                      AstConstant("mask"))
+    REPLACEMENT_PATTERN = AstNode(m_and,
+                                  AstNode(m_neg,
+                                          AstLeaf("x_0")),
+                                  AstConstant("mask"))
+
+    def check_candidate(self, candidate):
+        return (candidate["c_sub"].value & candidate["mask"].value) == 0
+
+
+class CstSimplificationRule27(PatternMatchingRule):
+    PATTERN = AstNode(m_xdu, AstConstant("c_val"))
+    REPLACEMENT_PATTERN = AstNode(m_mov, AstConstant("c_extended"))
+
+    def check_candidate(self, candidate):
+        candidate.add_constant_leaf("c_extended", candidate["c_val"].value, candidate.size)
+        return True
+
+
+class CstSimplificationRule28(PatternMatchingRule):
+    PATTERN = AstNode(m_xdu,
+                      AstNode(m_and,
+                              AstNode(m_neg, AstLeaf("x_0")),
+                              AstConstant("mask")))
+    REPLACEMENT_PATTERN = None  # Создаём вручную
+
+    def check_candidate(self, candidate):
+        return True
+
+    def get_replacement(self, candidate):
+        # Создаём xdu с правильным размером результата вручную
+        xdu_ins = minsn_t(candidate.ea)
+        xdu_ins.opcode = m_xdu
+        xdu_ins.l = candidate["x_0"].mop.copy()
+        xdu_ins.d = mop_t()
+        xdu_ins.d.size = candidate.size  # Размер результата xdu (8 байт)
+
+        # Создаём mop из xdu инструкции
+        xdu_mop = mop_t()
+        xdu_mop.create_from_insn(xdu_ins)
+
+        # Создаём AND с xdu и маской
+        new_ins = minsn_t(candidate.ea)
+        new_ins.opcode = m_and
+        new_ins.l = xdu_mop
+
+        # Создаём маску с правильным размером
+        mask_mop = mop_t()
+        mask_mop.make_number(candidate["mask"].value, candidate.size)
+        new_ins.r = mask_mop
+
+        new_ins.d = candidate.dst_mop
+        return new_ins
+
+
+class CstSimplificationRule29(PatternMatchingRule):
+    PATTERN = AstNode(m_and,
+                      AstNode(m_xdu, AstLeaf("x_0")),
+                      AstConstant("mask"))
+    REPLACEMENT_PATTERN = None  # Создаём вручную
+
+    def check_candidate(self, candidate):
+        xdu_size = candidate.size
+        x_0_size = candidate["x_0"].mop.size
+        mask_val = candidate["mask"].value
+
+        # Проверяем что маска помещается в размер x_0
+        if xdu_size > x_0_size:
+            mask_fits = (mask_val >> (x_0_size * 8)) == 0
+            return mask_fits
+        return False
+
+    def get_replacement(self, candidate):
+        x_0_size = candidate["x_0"].mop.size
+        mask_val = candidate["mask"].value
+
+        # Создаём (x & mask) с размером x_0
+        and_ins = minsn_t(candidate.ea)
+        and_ins.opcode = m_and
+        and_ins.l = candidate["x_0"].mop.copy()
+
+        mask_mop = mop_t()
+        mask_mop.make_number(mask_val, x_0_size)
+        and_ins.r = mask_mop
+
+        and_ins.d = mop_t()
+        and_ins.d.size = x_0_size
+
+        # Создаём mop из AND
+        and_mop = mop_t()
+        and_mop.create_from_insn(and_ins)
+
+        # Создаём xdu с правильным размером результата
+        xdu_ins = minsn_t(candidate.ea)
+        xdu_ins.opcode = m_xdu
+        xdu_ins.l = and_mop
+        xdu_ins.d = candidate.dst_mop  # Правильный размер результата
+
+        return xdu_ins

@@ -451,7 +451,18 @@ def mba_deep_cleaning(mba: mbl_array_t, call_mba_combine_block=True) -> int:
         # TODO: investigate the root cause of this issue
         mba.combine_blocks()
     else:
-        mba.remove_empty_blocks()
+        # Try to remove empty blocks - method may not exist in newer IDA versions
+        try:
+            if hasattr(mba, 'remove_empty_blocks'):
+                mba.remove_empty_blocks()
+            else:
+                # Fallback: use combine_blocks which is more stable
+                helper_logger.debug("remove_empty_blocks not available, using combine_blocks instead")
+                mba.combine_blocks()
+        except AttributeError:
+            # If method doesn't exist, just skip this step
+            helper_logger.debug("Skipping empty block removal (method not available)")
+            pass
     nb_change = mba_remove_simple_goto_blocks(mba)
     return nb_change
 

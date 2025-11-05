@@ -7,10 +7,11 @@ from d810.cfg_utils import change_1way_block_successor
 from d810.hexrays_formatters import format_minsn_t, dump_microcode_for_debug
 from d810.optimizers.flow.flattening.utils import get_all_possibles_values
 from d810.optimizers.flow.flattening.generic import GenericUnflatteningRule
+from d810.utils import unsigned_to_signed
 
 unflat_logger = logging.getLogger('D810.unflat')
 
-FAKE_LOOP_OPCODES = [m_jz, m_jnz]
+FAKE_LOOP_OPCODES = [m_jz, m_jnz, m_jae, m_jb, m_ja, m_jbe, m_jg, m_jge, m_jl, m_jle]
 
 
 class UnflattenerFakeJump(GenericUnflatteningRule):
@@ -57,14 +58,50 @@ class UnflattenerFakeJump(GenericUnflatteningRule):
         jmp_taken = False
         jmp_not_taken = False
         dst_serial = None
+
         if jmp_ins.opcode == m_jz:
             jmp_taken = all([possible_value == compared_value for possible_value in pred_comparison_values])
-
             jmp_not_taken = all([possible_value != compared_value for possible_value in pred_comparison_values])
         elif jmp_ins.opcode == m_jnz:
             jmp_taken = all([possible_value != compared_value for possible_value in pred_comparison_values])
             jmp_not_taken = all([possible_value == compared_value for possible_value in pred_comparison_values])
-        # TODO: handles other jumps cases
+        elif jmp_ins.opcode == m_jae:
+            jmp_taken = all([possible_value >= compared_value for possible_value in pred_comparison_values])
+            jmp_not_taken = all([possible_value < compared_value for possible_value in pred_comparison_values])
+        elif jmp_ins.opcode == m_jb:
+            jmp_taken = all([possible_value < compared_value for possible_value in pred_comparison_values])
+            jmp_not_taken = all([possible_value >= compared_value for possible_value in pred_comparison_values])
+        elif jmp_ins.opcode == m_ja:
+            jmp_taken = all([possible_value > compared_value for possible_value in pred_comparison_values])
+            jmp_not_taken = all([possible_value <= compared_value for possible_value in pred_comparison_values])
+        elif jmp_ins.opcode == m_jbe:
+            jmp_taken = all([possible_value <= compared_value for possible_value in pred_comparison_values])
+            jmp_not_taken = all([possible_value > compared_value for possible_value in pred_comparison_values])
+        elif jmp_ins.opcode == m_jg:
+            size = jmp_ins.r.size
+            signed_compared = unsigned_to_signed(compared_value, size)
+            signed_values = [unsigned_to_signed(v, size) for v in pred_comparison_values]
+            jmp_taken = all([v > signed_compared for v in signed_values])
+            jmp_not_taken = all([v <= signed_compared for v in signed_values])
+        elif jmp_ins.opcode == m_jge:
+            size = jmp_ins.r.size
+            signed_compared = unsigned_to_signed(compared_value, size)
+            signed_values = [unsigned_to_signed(v, size) for v in pred_comparison_values]
+            jmp_taken = all([v >= signed_compared for v in signed_values])
+            jmp_not_taken = all([v < signed_compared for v in signed_values])
+        elif jmp_ins.opcode == m_jl:
+            size = jmp_ins.r.size
+            signed_compared = unsigned_to_signed(compared_value, size)
+            signed_values = [unsigned_to_signed(v, size) for v in pred_comparison_values]
+            jmp_taken = all([v < signed_compared for v in signed_values])
+            jmp_not_taken = all([v >= signed_compared for v in signed_values])
+        elif jmp_ins.opcode == m_jle:
+            size = jmp_ins.r.size
+            signed_compared = unsigned_to_signed(compared_value, size)
+            signed_values = [unsigned_to_signed(v, size) for v in pred_comparison_values]
+            jmp_taken = all([v <= signed_compared for v in signed_values])
+            jmp_not_taken = all([v > signed_compared for v in signed_values])
+
         if jmp_taken:
             unflat_logger.info("It seems that '{0}' is always taken when coming from {1}: {2}"
                                .format(format_minsn_t(jmp_ins), pred.serial, pred_comparison_values))
